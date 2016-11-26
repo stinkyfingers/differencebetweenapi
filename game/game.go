@@ -3,21 +3,23 @@ package game
 import (
 	"errors"
 	"math/rand"
+	"strconv"
 
 	"github.com/stinkyfingers/socket/server/db"
 	"gopkg.in/mgo.v2/bson"
 )
 
 type Game struct {
-	ID          bson.ObjectId     `bson:"_id" json:"_id"`
-	Round       Round             `bson:"round" json:"round"`
-	Players     []Player          `bson:"players" json:"players"`
-	Initialized bool              `bson:"initialized" json:"initialized"`
-	DealerDeck  []DealerCard      `bson:"dealerDeck" json:"dealerDeck"`
-	Deck        []Card            `bson:"deck" json:"deck"`
-	FinalScore  map[string][]Play `bson:"finalScore,omitempty" json:"finalScore,omitempty"` // PlayerIDHex to []Vote
-	StartedBy   string            `bson:"startedBy" json:"startedBy"`
-	Rounds      []Round           `bson:"rounds" json:"rounds"`
+	ID           bson.ObjectId     `bson:"_id" json:"_id"`
+	Round        Round             `bson:"round" json:"round"`
+	Players      []Player          `bson:"players" json:"players"`
+	Initialized  bool              `bson:"initialized" json:"initialized"`
+	DealerDeck   []DealerCard      `bson:"dealerDeck" json:"dealerDeck"`
+	Deck         []Card            `bson:"deck" json:"deck"`
+	FinalScore   map[string][]Play `bson:"finalScore,omitempty" json:"finalScore,omitempty"` // PlayerIDHex to []Vote
+	StartedBy    string            `bson:"startedBy" json:"startedBy"`
+	Rounds       []Round           `bson:"rounds" json:"rounds"`
+	RoundsInGame int               `bson:"roundsInGame" json:"roundsInGame"`
 }
 
 type Round struct {
@@ -34,8 +36,8 @@ type MostRecentResults struct {
 }
 
 type Card struct {
-	Phrase string `bson:"phrase" json:"phrase"`
-	Player Player `bson:"player,omitempty" json:"player,omitempty"` // player that holds/plays card
+	Phrase   string        `bson:"phrase" json:"phrase"`
+	PlayerID bson.ObjectId `bson:"playerId,omitempty" json:"playerId,omitempty"`
 }
 
 type DealerCard struct {
@@ -51,7 +53,9 @@ type Play struct {
 type PlayType string
 
 var cardsInHand = 3
-var roundsInGame = 3
+var roundsInGame = 4
+var maxPlayers = 10
+var maxRounds = 10
 var collection = "difference-between"
 
 func (g *Game) Get() error {
@@ -109,7 +113,7 @@ func (g *Game) Deal() error {
 			index := rand.Intn(total)
 			total--
 			c := g.Deck[index]
-			c.Player = g.Players[p]
+			c.PlayerID = g.Players[p].ID
 			thisPlayer := g.Players[p]
 			thisPlayer.Hand = append(thisPlayer.Hand, c)
 			g.Players[p] = thisPlayer
@@ -137,8 +141,17 @@ func (g *Game) Initialize() error {
 	if len(g.Deck) == 0 || len(g.DealerDeck) == 0 {
 		return errors.New("Starting game requires a deck & dealer deck")
 	}
-	if len(g.Players) < 1 {
-		return errors.New("Starting game requires two or more players") //TODO - make 2
+	if len(g.Players) < 2 {
+		return errors.New("Starting game requires two or more players")
+	}
+	if g.RoundsInGame == 0 {
+		g.RoundsInGame = roundsInGame
+	}
+	if len(g.Players) > maxPlayers {
+		return errors.New("Max number of players is " + strconv.Itoa(maxPlayers))
+	}
+	if g.RoundsInGame > maxRounds {
+		return errors.New("Max number of rounds is " + strconv.Itoa(maxRounds))
 	}
 
 	g.Initialized = true
@@ -186,7 +199,7 @@ func (g *Game) ReplacePlayerCard(p Play) error {
 		for i, c := range g.Players[pid].Hand {
 			if c.Phrase == p.Card.Phrase {
 				newCard := g.DrawNewCard()
-				newCard.Player = g.Players[pid]
+				newCard.PlayerID = g.Players[pid].ID
 				g.Players[pid].Hand[i] = newCard
 				replaced = true
 			}
@@ -234,9 +247,9 @@ func (g *Game) UpdateVotes() error {
 		}
 	}
 
-	// TODO - check
+	// score
 	for _, play := range g.Round.Votes {
-		g.Round.Score[play.Card.Player.ID.Hex()] = append(g.Round.Score[play.Card.Player.ID.Hex()], play)
+		g.Round.Score[play.Card.PlayerID.Hex()] = append(g.Round.Score[play.Card.PlayerID.Hex()], play)
 	}
 
 	// Next Round
@@ -249,10 +262,9 @@ func (g *Game) UpdateVotes() error {
 	g.Rounds = append(g.Rounds, g.Round)
 	r := Round{
 		DealerCards: newDealerCards,
-		// Previous:    &lastRound,
-		Plays: make(map[string]Play),
-		Votes: make(map[string]Play),
-		Score: make(map[string][]Play),
+		Plays:       make(map[string]Play),
+		Votes:       make(map[string]Play),
+		Score:       make(map[string][]Play),
 		MostRecentResults: MostRecentResults{
 			Votes:       g.Round.Votes,
 			DealerCards: g.Round.DealerCards,

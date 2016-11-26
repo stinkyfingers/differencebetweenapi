@@ -2,98 +2,11 @@ package handlers
 
 import (
 	"encoding/json"
-	"log"
 	"net/http"
 
 	"github.com/stinkyfingers/socket/server/game"
-	"golang.org/x/net/websocket"
 	"gopkg.in/mgo.v2/bson"
 )
-
-type Client struct {
-	ws *websocket.Conn
-	IP string
-}
-
-var Clients map[string][]Client
-var Games map[string]game.Game
-
-// Server needs to:
-// 1. Send each client Lead Cards and their Player Hand
-// 2. Receive each client's play
-// 3. Send each client Played Cards
-// 4. Receive each client's vote
-
-func Game(ws *websocket.Conn) {
-	id := ws.Request().URL.Query().Get("id")
-	log.Print("ID", id)
-	if id == "" {
-		return
-	}
-
-	var g game.Game
-	g.ID = bson.ObjectIdHex(id)
-	err := g.Get()
-	if err != nil {
-		log.Print(err)
-		return
-	}
-	Games[g.ID.Hex()] = g
-
-	// client return
-	client := Client{
-		ws,
-		ws.Request().RemoteAddr,
-	}
-	Clients[id] = append(Clients[id], client)
-
-	for {
-
-		for i, c := range Clients[id] {
-			log.Print("CLIENT ", c.IP, ws)
-			err = websocket.JSON.Send(c.ws, Games[id])
-			if err != nil {
-				log.Print("WS client connection error: ", err)
-				Clients[id] = append(Clients[id][:i], Clients[id][i+1:]...) //remove dead client
-				// break
-			}
-		}
-
-		var p game.Play
-		err = websocket.JSON.Receive(ws, &p)
-		if err != nil {
-			log.Print(err)
-			break //TODO - handle errors in WS
-		}
-
-		switch p.PlayType {
-		case "play":
-			Games[id].Round.Plays[p.Player.ID.Hex()] = p // TODO - switch to id.hex
-		case "vote":
-			Games[id].Round.Votes[p.Player.ID.Hex()] = p
-		default:
-			log.Print("type not supported")
-		}
-
-		ch := make(chan game.Game)
-		go func() {
-			if p.PlayType == "play" && len(Games[id].Round.Plays) > 1 { //TODO -len equal to players
-				ga := Games[id]
-				(&ga).UpdatePlays()
-				ch <- ga
-			} else if p.PlayType == "vote" && len(Games[id].Round.Votes) > 1 {
-				ga := Games[id]
-				(&ga).UpdateVotes()
-				ch <- ga
-			} else {
-				ch <- Games[id]
-			}
-		}()
-
-		ga := <-ch
-		Games[id] = ga
-	}
-}
 
 func HandleNewGame(w http.ResponseWriter, r *http.Request) {
 	var player game.Player
@@ -202,6 +115,21 @@ func HandleExitGame(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	g.Initialized = false
+	err = g.Update()
+	if err != nil {
+		HttpError{err, "error updating game", 500, w}.HandleErr()
+		return
+	}
+	sendJson(w, g)
+}
+
+func HandleUpdateGame(w http.ResponseWriter, r *http.Request) {
+	var g game.Game
+	err := json.NewDecoder(r.Body).Decode(&g)
+	if err != nil {
+		HttpError{err, "error decoding game", 500, w}.HandleErr()
+		return
+	}
 	err = g.Update()
 	if err != nil {
 		HttpError{err, "error updating game", 500, w}.HandleErr()
