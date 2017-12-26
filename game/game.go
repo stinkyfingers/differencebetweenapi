@@ -37,15 +37,6 @@ type MostRecentResults struct {
 	Votes       map[string]Play `bson:"votes" json:"votes"`
 }
 
-type Card struct {
-	Phrase   string        `bson:"phrase" json:"phrase"`
-	PlayerID bson.ObjectId `bson:"playerId,omitempty" json:"playerId,omitempty"`
-}
-
-type DealerCard struct {
-	Phrase string `bson:"phrase" json:"phrase"`
-}
-
 type Play struct {
 	Player   Player   `bson:"player" json:"player"`
 	Card     Card     `bson:"card" json:"card"`
@@ -54,7 +45,7 @@ type Play struct {
 
 type PlayType string
 
-var cardsInHand = 3
+var cardsInHand = 7
 var roundsInGame = 4
 var maxPlayers = 10
 var maxRounds = 10
@@ -65,7 +56,7 @@ func (g *Game) Get() error {
 	g.Round.Plays = make(map[string]Play)
 	g.Round.Votes = make(map[string]Play)
 	g.Round.Score = make(map[string][]Play)
-	if len(g.Rounds) == roundsInGame {
+	if len(g.Rounds) == g.RoundsInGame {
 		return g.TallyScore()
 	}
 	return err
@@ -129,7 +120,12 @@ func (g *Game) Deal() error {
 
 	for p := range g.Players {
 		for i := len(g.Players[p].Hand); i < cardsInHand; i++ {
-			index := rand.Intn(total)
+			if total < 1 {
+				return errors.New("not enough cards in deck to deal cards")
+			}
+			source := rand.NewSource(time.Now().UnixNano())
+			r := rand.New(source)
+			index := r.Intn(total)
 			total--
 			c := g.Deck[index]
 			c.PlayerID = g.Players[p].ID
@@ -149,7 +145,9 @@ func (g *Game) DrawCards() ([]DealerCard, error) {
 		return nil, errors.New("Not enough cards left")
 	}
 	for i := 0; i < 2; i++ {
-		index := rand.Intn(total)
+		source := rand.NewSource(time.Now().UnixNano())
+		r := rand.New(source)
+		index := r.Intn(total)
 		cards = append(cards, g.DealerDeck[index])
 		g.DealerDeck = append(g.DealerDeck[:index], g.DealerDeck[index+1:]...)
 	}
@@ -292,7 +290,7 @@ func (g *Game) UpdateVotes() error {
 	g.Round = r
 
 	// Check for game end
-	if len(g.Rounds) == roundsInGame {
+	if len(g.Rounds) == g.RoundsInGame {
 		return g.TallyScore()
 	}
 

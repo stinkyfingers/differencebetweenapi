@@ -41,13 +41,13 @@ func (h *Hub) Run() {
 
 		case client := <-h.Unregister:
 			if _, ok := h.ClientMap[client.GameID]; ok {
+				cm := h.ClientMap[client.GameID]
 				for i := range h.ClientMap[client.GameID] {
 					if &h.ClientMap[client.GameID][i] == client {
-						cm := append(h.ClientMap[client.GameID][:i], h.ClientMap[client.GameID][i+1:]...)
-						h.ClientMap[client.GameID] = cm
+						cm = append(h.ClientMap[client.GameID][:i], h.ClientMap[client.GameID][i+1:]...)
 					}
 				}
-				// close(client.send)
+				h.ClientMap[client.GameID] = cm
 			}
 
 		case message := <-h.Broadcast:
@@ -55,12 +55,13 @@ func (h *Hub) Run() {
 				select {
 				case client.send <- message:
 				default:
+					cm := h.ClientMap[client.GameID]
 					for i := range h.ClientMap[client.GameID] {
 						if h.ClientMap[client.GameID][i] == client {
-							cm := append(h.ClientMap[client.GameID][:i], h.ClientMap[client.GameID][i+1:]...)
-							h.ClientMap[client.GameID] = cm
+							cm = append(h.ClientMap[client.GameID][:i], h.ClientMap[client.GameID][i+1:]...)
 						}
 					}
+					h.ClientMap[client.GameID] = cm
 				}
 			}
 		}
@@ -81,12 +82,14 @@ func ServeWS(ws *websocket.Conn, h *Hub) {
 		return
 	}
 
-	h.Games[g.ID.Hex()] = &g
+	if h.Games[g.ID.Hex()] == nil || !h.Games[g.ID.Hex()].Initialized {
+		h.Games[g.ID.Hex()] = &g
+	}
 
 	cli := WSClient{Conn: *ws, GameID: id, Hub: h, send: make(chan *game.Game)}
 	h.Register <- &cli
 	go cli.write()
-	cli.Hub.Broadcast <- &g
+	cli.Hub.Broadcast <- h.Games[g.ID.Hex()]
 	err = cli.read()
 	if err != nil {
 		websocket.JSON.Send(ws, HttpError{Error: err, Message: "Error in Websocket read loop", Status: 500})
