@@ -4,6 +4,7 @@ import (
 	"flag"
 	"log"
 	"net/http"
+	"os"
 
 	"github.com/stinkyfingers/easyrouter"
 	"github.com/stinkyfingers/socket/server/db"
@@ -154,6 +155,10 @@ func main() {
 	err := db.NewSession()
 	if err != nil {
 		log.Fatal(err)
+	}
+	port_env := os.Getenv("PORT")
+	if port_env != "" {
+		*port = port_env
 	}
 
 	s := easyrouter.Server{
